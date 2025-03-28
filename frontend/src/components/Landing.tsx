@@ -1,46 +1,40 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import Room from "./Room";
 import VideoComp from "./Video";
 
 export default function Landing() {
   const [name, setName] = useState("");
-  const [localAudioTrack, setLocalAudioTrack] = useState<MediaStreamTrack | null>(null)
-  const [localVideoTrack, setLocalVideoTrack] = useState<MediaStreamTrack | null>(null)
+  const localStreamRef = useRef<MediaStream | null>(null);
   const [joined, setJoined] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
-  const videoRef = useRef<HTMLVideoElement>(null)
-
-  const navigate = useNavigate();
-
-
-  // getting the camera and audio of the user
-  const getUserCamera = async()=>{
-    const stream = await window.navigator.mediaDevices.getUserMedia({
-      video:true,
-      audio:true
-    })
-
-    const videoTrack = stream.getVideoTracks()[0];
-    const audioTrack = stream.getAudioTracks()[0];
-    setLocalVideoTrack(videoTrack);
-    setLocalAudioTrack(audioTrack);
-
-    if(videoRef && videoRef.current){
-      videoRef.current.srcObject = new MediaStream([videoTrack]);
-      videoRef.current.play();
+  const getUserCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true
+      });
+      
+      localStreamRef.current = stream; // Store in ref
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (error) {
+      console.error("Error accessing media devices:", error);
     }
+  };
 
+  useEffect(() => {
+    getUserCamera();
+    
+    return () => {
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
-  }
-  useEffect(()=>{
-
-    if(videoRef && videoRef.current){
-      getUserCamera();
-    }
-  },[])
-
-  console.log("this is the name from the landing page",name);
 
   if(!joined){
   return (
@@ -69,7 +63,6 @@ export default function Landing() {
         onClick={() => {
           // join room logic here
           setJoined(true);
-          navigate("/room");
         }}
         type="button"
         className="focus:outline-none text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 me-2 mb-2"
@@ -80,5 +73,5 @@ export default function Landing() {
   );
 }
 
-return <Room name={name} localAudioTrack={localAudioTrack} localVideoTrack={localVideoTrack} />
+return <Room name={name} localStream={localStreamRef} />
 }

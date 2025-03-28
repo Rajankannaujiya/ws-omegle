@@ -4,231 +4,249 @@ import VideoComp from "./Video";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "../store/store";
 import { setShowChat } from "../store/slice";
+import { AnswerMessage, IceCandidateMessage, OfferMessage, SendOfferMessage } from "./types"
 
 export default function Room({
   name,
-  localAudioTrack,
-  localVideoTrack,
+  localStream
 }: {
   name: string | null;
-  localAudioTrack: MediaStreamTrack | null;
-  localVideoTrack: MediaStreamTrack | null;
+  localStream:React.RefObject<MediaStream | null>;
 }) {
-  const [chatButton, setChatButton] = useState(false);
-  const [lobby, setLobby] = useState(false);
-  const [visibleName, setVisibleName] = useState(true);
-  const [socket, setSocket] = useState<WebSocket | null>(null);
-
-  const [message,setMessages] = useState<string[]>([])
-  const [senderPc, setSenderPc] = useState<RTCPeerConnection | null>(null);
-  const [receiverPc, setReceiverPc] = useState<RTCPeerConnection | null>(null);
-
-  const [remoteAudioTrack, setRemoteAudioTrack] = useState<MediaStreamTrack | null>(null);
-  const [remoteVideoTrack, setRemoteVideoTrack] = useState<MediaStreamTrack | null>(null);
-  const [remoteMediaStream, setRemoteMediaStream] = useState<MediaStream |null>(null)
-
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-
-  const socketRef = useRef<WebSocket | null>(null);
-
 
   const showChat = useSelector((state: RootState) => state?.chatArea?.showChat);
 
-
   const dispatch = useDispatch<AppDispatch>();
+
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+
+  const [chatButton, setChatButton] = useState(false);
+  const [lobby, setLobby] = useState(true);
+  const [socket, setSocket] = useState<WebSocket | null>(null);
+  const [senderPc, setSenderPc] = useState<RTCPeerConnection | null >(null);
+  const [receiverPc, setReceiverPc] = useState<RTCPeerConnection | null >(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream| null>(null);
+
+
+  const socketRef = useRef<WebSocket |null>(null);
+
   useEffect(() => {
     dispatch(setShowChat(false));
   }, []);
 
+console.log("these are the currents",localVideoRef.current, remoteVideoRef)
 
   useEffect(() => {
-
-    if(socketRef.current){
-      return
+    if (socketRef.current) {
+      return;
     }
 
+setTimeout(()=>{
+  if(!localVideoRef.current || !remoteVideoRef.current) {
+    alert("no .current");
+    return;
+  };
+})
     const ws = new WebSocket("ws://localhost:3000");
+    socketRef.current = ws;
+
     ws.onopen = () => {
-      setSocket(ws);
+      console.log("the connection is opened")
       ws.send(JSON.stringify({ event: "join", name }));
     };
 
-
     ws.onmessage = async(event)=>{
-
       const message = JSON.parse(event.data);
-      console.log(message?.event);
+      console.log('Received message:', message?.event);
 
-      if(message?.event === 'send-offer'){
-        setLobby(false);
-
-       const pc  = new RTCPeerConnection();
-       setSenderPc(pc);
-
-       if(localAudioTrack){
-        console.log("this is the localAudioTrack",localAudioTrack)
-        pc.addTrack(localAudioTrack)
-
-       }
-
-       if(localVideoTrack){
-        console.log("this is the localVideoTrack",localVideoTrack)
-        pc.addTrack(localVideoTrack)
-       }
-
-       pc.onicecandidate = async(e)=>{
-        if(!e.candidate){
-          return
+        switch (message?.event) {
+          case "send-offer":
+            await handleSendOffer(message);
+            break;
+          case "offer":
+            await handleOffer(message);
+            break;
+          case "answer":
+            await handleAnswer(message);
+            break;
+          case "add-ice-candidate":
+            await handleIceCandidate(message);
+            break;
+          case "lobby":
+            setLobby(true);
+            break;
         }
-        if(e.candidate){
-          // pc.addIceCandidate(e.candidate);
-          ws.send(JSON.stringify({event:"add-ice-candidate", candidate:e.candidate,target:"sender", roomId:message.roomId}))
-          console.log("after sending ice candidate")
-        }
-       }
-       
-
-       pc.onnegotiationneeded =async()=>{
-        const offer = await pc.createOffer();
-        pc.setLocalDescription(offer);
-        ws.send(JSON.stringify({ event: "offer", sdp:offer, roomId:message?.roomId}))
-       }
-      }
-
-
-      else if(message?.event === 'offer'){
-        console.log("inside offer")
-        console.log("Received offer")
-
-        setLobby(false);
-
-        const pc = new RTCPeerConnection();
-        await pc.setRemoteDescription(message.sdp);
-
-        const answer = await pc.createAnswer();
-  
-        pc.setLocalDescription(answer);
-        const stream = new MediaStream();
-
-        if(remoteVideoRef.current){
-          remoteVideoRef.current.srcObject = stream;
-          remoteVideoRef.current.play();
-        }
-
-
-        setRemoteMediaStream(stream)
-
-        setReceiverPc(pc);
-        // window?.pcr = pc
-        pc.ontrack =  ((event)=>{
-          console.log("inside on track")
-          stream.addTrack(event.track)
-          if (event.track.kind === "audio") {
-            setRemoteAudioTrack(event.track);
-          } else {
-            setRemoteVideoTrack(event.track);
-          }
-      
-          setRemoteMediaStream(stream);
-        })
-
-
-        pc.onicecandidate = async (e) => {
-          if (!e.candidate) {
-              return;
-          }
-          console.log("on ice candidate on receiving seide");
-          if (e.candidate) {
-            // pc.addIceCandidate(e.candidate)
-             ws.send(JSON.stringify({event:"add-ice-candidate",
-              candidate: e.candidate,
-              target: "receiver",
-              roomId:message?.roomId
-             }))
-          }
-        }
-
-
-        ws.send(JSON.stringify({ event: "answer", sdp:answer, roomId:message?.roomId}));
-
-        setTimeout(() => {
-          const track1 = pc.getTransceivers()[0]?.receiver.track
-          const track2 = pc.getTransceivers()[1]?.receiver.track
-          console.log(track1);
-          if (track1.kind === "video") {
-              setRemoteAudioTrack(track2)
-              setRemoteVideoTrack(track1)
-          } else {
-              setRemoteAudioTrack(track1)
-              setRemoteVideoTrack(track2)
-          }
-
-          const stream = new MediaStream();
-          if(remoteVideoRef.current){
-            remoteVideoRef.current.srcObject= stream;
-            remoteVideoRef.current.play();
-          }
-      }, 5000)
-
-
-      }
-      else if(message?.event === "answer"){
-        setLobby(false);
-        setSenderPc(pc => {
-          pc?.setRemoteDescription(message?.sdp)
-          return pc;
-      });
-
-      }
-      else if(message?.event === 'lobby'){
-        setLobby(true)
-      }
-
-      else if(message?.event=== 'add-ice-candidate'){
-        console.log("add ice candidate from remote");
-        console.log("message from the candidate remot", message);
-        if (message?.target == "sender") {
-          setSenderPc(pc => {
-              if (!pc) {
-                  console.error("receicng pc nout found")
-              } else {
-                  console.error("erro in pc ontrack",pc.ontrack)
-              }
-              pc?.addIceCandidate(message?.candidate)
-              return pc;
-          });
-      } else {
-          setSenderPc(pc => {
-              if (!pc) {
-                  console.error("sending pc out found")
-              } else {
-                  // console.error(pc.ontrack)
-              }
-              pc?.addIceCandidate(message?.candidate)
-              return pc;
-          });
-      }
-      }
-    
     }
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      setSocket(null);
+    };
 
     setSocket(ws);
-    // return () => ws.close();
 
-  }, [name]);// Avoid unnecessary WebSocket reconnections
+    return ()=>{
+      if(ws.readyState == WebSocket.OPEN){
+        ws.close();
+      }
 
+      if(senderPc){
+        senderPc.close();
+      }
 
-  useEffect(()=>{
-
-    if(localVideoRef.current){
-      if(localVideoTrack){
-        localVideoRef.current.srcObject = new MediaStream([localVideoTrack]);
-      localVideoRef.current?.play();
+      if(receiverPc){
+        receiverPc.close();
       }
     }
-  },[localVideoRef])
 
+  }, [name]); 
+
+
+  const handleSendOffer = async(message:SendOfferMessage)=>{
+    console.log("inside handlesendoffer")
+    setLobby(false);
+    const pc = new RTCPeerConnection();
+
+
+    try {
+      console.log("local stream",localStream.current)
+      if(!localStream.current){
+        return;
+      }
+      if (localStream) {
+        console.log("this is the localStream",localStream);
+        const stream = localStream.current
+      stream?.getTracks().forEach(track => pc.addTrack(track, stream));
+  }
+
+    pc.onicecandidate =(e)=>{
+      console.log(e);
+
+      if(e.candidate){
+        socketRef.current?.send(JSON.stringify({
+          event: "add-ice-candidate",
+          candidate: e.candidate,
+          target: "sender",
+          roomId: message.roomId,
+      }))
+      }
+    }
+
+    pc.onnegotiationneeded = async()=>{
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socketRef.current?.send(
+        JSON.stringify({
+          event: "offer",
+          sdp: offer,
+          roomId: message.roomId,
+        })
+      );
+    }
+
+    setSenderPc(pc);
+    } catch (error) {
+      console.error("Error in handleSendOffer:", error?.message);
+    }
+
+  }
+
+
+  const handleOffer = async(message:OfferMessage)=>{
+    console.log("inside handle offer")
+    setLobby(false);
+    const pc = new RTCPeerConnection();
+    const stream= new MediaStream();
+
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = stream;
+      remoteVideoRef.current.play();
+    }
+
+    pc.ontrack = (event)=>{
+      console.log("+++==+++++++++++++++++++++++++++++++++++++++++++++++")
+      console.log("inside the ontrack")
+     try {
+       if (event.streams && event.streams[0]) {
+         console.log("inside the event.stream",event.streams[0])
+
+         if (remoteVideoRef.current) {
+          console.log("I am before the srcObject Ref")
+           remoteVideoRef.current.srcObject = event.streams[0];
+           const playPromise = remoteVideoRef.current.play();
+           console.log("I am after the srcObject Ref")
+           if (playPromise !== undefined) {
+            console.log("I am in the srcObject Ref")
+             playPromise
+               .then(_ => console.log("Remote video playing"))
+               .catch(err => {
+                 console.log("Autoplay prevented, adding play button",err?.message);
+                 // Add UI fallback for manual play
+                 remoteVideoRef.current!.controls = true;
+               });
+           }
+         }
+       } else {
+         stream.addTrack(event.track);
+       }
+     } catch (error) {
+      console.log("this is the error from the the pc.ontrack", error?.message)
+     }
+    }
+
+    pc.onicecandidate =(e)=>{
+      console.log(e);
+
+      if (e.candidate) {
+        socketRef.current?.send(
+          JSON.stringify({
+            event: "add-ice-candidate",
+            candidate: e.candidate,
+            target: "receiver",
+            roomId: message.roomId,
+          })
+        );
+      }
+    }
+
+    pc.setRemoteDescription(message.sdp)
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socketRef.current?.send(
+        JSON.stringify({
+          event: "answer",
+          sdp: answer,
+          roomId: message.roomId,
+        })
+      );
+
+    setReceiverPc(pc);
+  }
+
+
+  const handleAnswer = async(message:AnswerMessage)=>{
+    console.log("Inside handleAnswer")
+    setLobby(false);
+    if(senderPc){
+      await senderPc.setRemoteDescription(message?.sdp)
+    }
+  }
+
+
+  const handleIceCandidate = async(message:IceCandidateMessage)=>{
+    try {
+      console.log("inside handleIceCandidate")
+      const candidate = new RTCIceCandidate(message.candidate);
+      if (message.target === "sender" && receiverPc) {
+        await receiverPc.addIceCandidate(candidate);
+      } else if (senderPc) {
+        await senderPc.addIceCandidate(candidate);
+      }
+    } catch (error) {
+      console.error('Error adding ICE candidate:', error);
+    }
+  }
 
   useEffect(() => {
     const handleResize = () => {
@@ -253,15 +271,10 @@ export default function Room({
     };
   }, [dispatch]);
 
-  if(lobby){
-    return (
-      <div>
-        Waiting to connect with someone
-      </div>
-    )
+  if (lobby) {
+    return <div>Waiting to connect with someone</div>;
   }
 
-  console.log("local video ref is",localVideoRef?.current)
 
   return (
     <div className="sm:grid md:grid-cols-2 grid-cols-1 h-screen">
@@ -276,8 +289,10 @@ export default function Room({
             : "flex-row w-screen"
         } md:flex-row lg:flex-col w-full h-full`}
       >
-        {localVideoRef && <VideoComp ref={localVideoRef} />}
-        {remoteVideoRef && <VideoComp ref={remoteVideoRef} />}
+        <div>
+        {!lobby && <VideoComp ref={localVideoRef} />}
+        </div>
+        <div>{!lobby && <VideoComp ref={remoteVideoRef} />} </div>
       </div>
 
       <button
